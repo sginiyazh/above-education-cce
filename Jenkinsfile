@@ -10,9 +10,8 @@ pipeline {
         DEPLOYMENT     = 'above-education'
         CONTAINER_NAME = 'above-education'
 
-        IMAGE_TAG      = "${BUILD_NUMBER}"
-        FULL_IMAGE     = "${SWR_REGISTRY}/${SWR_NAMESPACE}/${IMAGE_NAME}:${BUILD_NUMBER}"
-        LATEST_IMAGE   = "${SWR_REGISTRY}/${SWR_NAMESPACE}/${IMAGE_NAME}:latest"
+        FULL_IMAGE   = "${SWR_REGISTRY}/${SWR_NAMESPACE}/${IMAGE_NAME}:${BUILD_NUMBER}"
+        LATEST_IMAGE = "${SWR_REGISTRY}/${SWR_NAMESPACE}/${IMAGE_NAME}:latest"
     }
 
     stages {
@@ -25,9 +24,11 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh '''
-                    echo "Building $FULL_IMAGE"
+                    echo "Building image: $FULL_IMAGE"
 
                     docker build \
+                      --pull \
+                      --no-cache \
                       -t "$FULL_IMAGE" \
                       -t "$LATEST_IMAGE" \
                       .
@@ -47,15 +48,15 @@ pipeline {
                     sh '''
                         set +x
 
-                        test -n "$SWR_USER" || {
-                            echo "SWR username is empty"
+                        if [ -z "$SWR_USER" ]; then
+                            echo "ERROR: SWR username is empty"
                             exit 1
-                        }
+                        fi
 
-                        test -n "$SWR_PASSWORD" || {
-                            echo "SWR password is empty"
+                        if [ -z "$SWR_PASSWORD" ]; then
+                            echo "ERROR: SWR password is empty"
                             exit 1
-                        }
+                        fi
 
                         echo "$SWR_PASSWORD" | docker login \
                           "$SWR_REGISTRY" \
@@ -69,7 +70,10 @@ pipeline {
         stage('Push Image to SWR') {
             steps {
                 sh '''
+                    echo "Pushing build tag: $FULL_IMAGE"
                     docker push "$FULL_IMAGE"
+
+                    echo "Updating latest tag: $LATEST_IMAGE"
                     docker push "$LATEST_IMAGE"
                 '''
             }
@@ -114,6 +118,12 @@ pipeline {
                     sh '''
                         export KUBECONFIG="$KUBECONFIG_FILE"
 
+                        echo "Deployment image:"
+                        kubectl get deployment "$DEPLOYMENT" \
+                          -n "$K8S_NAMESPACE" \
+                          -o jsonpath='{.spec.template.spec.containers[*].image}'
+
+                        echo
                         kubectl get pods -n "$K8S_NAMESPACE" -o wide
                         kubectl get service -n "$K8S_NAMESPACE"
                     '''
@@ -126,6 +136,7 @@ pipeline {
         success {
             echo "Pipeline completed successfully."
             echo "Image pushed: ${FULL_IMAGE}"
+            echo "Latest updated: ${LATEST_IMAGE}"
         }
 
         failure {
@@ -135,8 +146,11 @@ pipeline {
         always {
             sh '''
                 docker logout "$SWR_REGISTRY" || true
+
                 docker image rm "$FULL_IMAGE" || true
                 docker image rm "$LATEST_IMAGE" || true
+
+                docker image prune -f || true
             '''
         }
     }

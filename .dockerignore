@@ -1,0 +1,6 @@
+.git
+.gitignore
+Jenkinsfile
+README.md
+readme.txt
+*.log
